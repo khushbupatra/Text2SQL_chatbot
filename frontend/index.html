@@ -1,0 +1,122 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Text‑to‑SQL Chatbot</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell; margin: 24px; }
+      .card { border: 1px solid #e5e7eb; border-radius: 16px; padding: 16px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,.05); }
+      input, textarea, select, button { font: inherit; padding: 8px 12px; border-radius: 12px; border: 1px solid #d1d5db; }
+      textarea { width: 100%; min-height: 80px; }
+      button { cursor: pointer; }
+      pre { background: #0b1020; color: #d1e7ff; padding: 12px; border-radius: 12px; overflow: auto; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { border: 1px solid #e5e7eb; padding: 8px; text-align: left; }
+      .row { display: flex; gap: 12px; align-items: center; }
+    </style>
+  </head>
+  <body>
+    <h1>AI Text‑to‑SQL Chatbot</h1>
+    <div class="card">
+      <div class="row">
+        <label>DB Key:</label>
+        <select id="db"></select>
+        <button onclick="refreshSchemas()">Refresh</button>
+      </div>
+      <p></p>
+      <textarea id="q" placeholder="Ask a question like: Top 10 customers by spend last month"></textarea>
+      <p></p>
+      <textarea id="schema_hint" placeholder="(Optional) Paste table/column info here to guide the LLM"></textarea>
+      <p></p>
+      <button onclick="ask()">Run</button>
+      <span id="status"></span>
+    </div>
+
+    <div class="card">
+      <h3>SQL</h3>
+      <pre id="sql"></pre>
+      <div id="verify"></div>
+    </div>
+
+    <div class="card">
+      <h3>Rows</h3>
+      <div id="rows"></div>
+    </div>
+
+    <div class="card">
+      <h3>Metrics</h3>
+      <pre id="metrics"></pre>
+      <button onclick="loadMetrics()">Refresh Metrics</button>
+    </div>
+
+    <script>
+      const API = (p) => (location.origin.includes(":") ? location.origin : "http://localhost:8000") + p;
+
+      async function refreshSchemas() {
+        const r = await fetch(API("/schemas"));
+        const j = await r.json();
+        const sel = document.getElementById("db");
+        sel.innerHTML = "";
+        for (const k of j.databases) {
+          const opt = document.createElement("option");
+          opt.value = k;
+          opt.textContent = k;
+          sel.appendChild(opt);
+        }
+      }
+
+      async function loadMetrics() {
+        const r = await fetch(API("/metrics"));
+        const j = await r.json();
+        document.getElementById("metrics").textContent = JSON.stringify(j, null, 2);
+      }
+
+      async function ask() {
+        const user_text = document.getElementById("q").value;
+        const db_key = document.getElementById("db").value;
+        const schema_hint = document.getElementById("schema_hint").value;
+        document.getElementById("status").textContent = "Running...";
+        document.getElementById("sql").textContent = "";
+        document.getElementById("rows").innerHTML = "";
+        try {
+          const r = await fetch(API("/ask"), {
+            method: "POST",
+            headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({user_text, db_key, schema_hint})
+          });
+          const j = await r.json();
+          if (!r.ok) throw new Error(j.detail || JSON.stringify(j));
+          document.getElementById("sql").textContent = j.sql;
+          document.getElementById("verify").textContent = j.verified ? "Verified with EXPLAIN ✅" : "Not verified with EXPLAIN";
+          const rows = j.rows;
+          if (!rows.length) {
+            document.getElementById("rows").textContent = "(no rows)";
+          } else {
+            const cols = Object.keys(rows[0]);
+            const table = document.createElement("table");
+            const thead = document.createElement("thead");
+            const trh = document.createElement("tr");
+            for (const c of cols) { const th = document.createElement("th"); th.textContent = c; trh.appendChild(th); }
+            thead.appendChild(trh);
+            table.appendChild(thead);
+            const tbody = document.createElement("tbody");
+            for (const r of rows) {
+              const tr = document.createElement("tr");
+              for (const c of cols) { const td = document.createElement("td"); td.textContent = r[c]; tr.appendChild(td); }
+              tbody.appendChild(tr);
+            }
+            table.appendChild(tbody);
+            document.getElementById("rows").appendChild(table);
+          }
+          document.getElementById("status").textContent = `Done in ${j.latency_ms} ms`;
+        } catch (e) {
+          document.getElementById("status").textContent = "Error: " + e.message;
+        }
+      }
+
+      refreshSchemas();
+      loadMetrics();
+    </script>
+  </body>
+</html>
